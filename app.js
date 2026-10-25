@@ -1,6 +1,6 @@
 'use strict';
 /* QuizLis – Vokabel-Lern-App (PWA). Alle Daten bleiben lokal auf dem Gerät. */
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 /* ============================== Helfer ============================== */
 const $ = (s, el = document) => el.querySelector(s);
@@ -58,21 +58,12 @@ const INTERVALS = [0, 1, 2, 4, 7, 14, 30]; // Tage bis zur nächsten Wiederholun
 function newCard(term = '', def = '') { return { id: uid(), term, def, box: 0, due: 0, seen: false, ok: 0, bad: 0 }; }
 function defaultSettings() { return { answerWith: 'term', strictAccents: false, autoSpeak: false, cardFront: 'term', speechRate: 0.9, hideInstall: false }; }
 function seedData() {
-  const words = [
-    ['ciao', 'hallo / tschüss'], ['grazie', 'danke'], ['per favore', 'bitte'], ['buongiorno', 'guten Morgen / guten Tag'],
-    ['la casa', 'das Haus'], ['il libro', 'das Buch'], ['la scuola', 'die Schule'], ["l'amico", 'der Freund'],
-    ['la città', 'die Stadt'], ['il caffè', 'der Kaffee'], ['mangiare', 'essen'], ['bere', 'trinken'],
-    ['andare', 'gehen'], ['essere', 'sein'], ['avere', 'haben'], ['bello', 'schön'],
-    ['grande', 'groß'], ['piccolo', 'klein'], ['oggi', 'heute'], ['domani', 'morgen'],
-    ['perché', 'warum / weil'], ['venerdì', 'der Freitag'],
-  ];
-  return normalizeData({
-    sets: [{ id: uid(), title: 'Beispiel: Italienisch Grundwortschatz', desc: 'Zum Ausprobieren – kann jederzeit gelöscht werden.', termLang: 'it', defLang: 'de', created: Date.now(), updated: Date.now(), cards: words.map(([t, d]) => newCard(t, d)) }],
-  });
+  if (typeof LIBRARY !== 'undefined') return normalizeData({ sets: LIBRARY.map(librarySet) });
+  return normalizeData({ sets: [] });
 }
 function normalizeData(d) {
   d.sets = (d.sets || []).map(s => ({
-    id: s.id || uid(), title: s.title || 'Ohne Titel', desc: s.desc || '', termLang: s.termLang || 'it', defLang: s.defLang || 'de',
+    id: s.id || uid(), libKey: s.libKey || null, title: s.title || 'Ohne Titel', desc: s.desc || '', termLang: s.termLang || 'it', defLang: s.defLang || 'de',
     created: s.created || Date.now(), updated: s.updated || Date.now(), lastTest: s.lastTest || null,
     cards: (s.cards || []).filter(c => c && (c.term || c.def)).map(c => ({ ...newCard(), ...c, id: c.id || uid() })),
   }));
@@ -220,7 +211,7 @@ document.addEventListener('click', e => {
 });
 const accentBar = (lang, forSel) => (ACCENTS[lang] || []).length ? `<div class="accent-bar" data-for="${forSel}">${ACCENTS[lang].map(a => `<button type="button" tabindex="-1">${a}</button>`).join('')}</div>` : '';
 
-const ROUTES = { '': viewHome, set: viewSet, edit: viewEdit, cards: viewCards, learn: viewLearn, test: viewTestSetup, testrun: viewTestRun, match: viewMatch, blast: viewBlast, gravity: viewGravity, settings: viewSettings };
+const ROUTES = { '': viewHome, set: viewSet, edit: viewEdit, cards: viewCards, learn: viewLearn, test: viewTestSetup, testrun: viewTestRun, match: viewMatch, blast: viewBlast, gravity: viewGravity, settings: viewSettings, library: viewLibrary };
 function render() {
   VIEW_TOKEN++;
   cleanups.forEach(f => { try { f(); } catch (e) { /* */ } }); cleanups = []; actions = {};
@@ -260,7 +251,7 @@ function viewHome() {
           ? `<b>${dueTotal} ${dueTotal === 1 ? 'Karte ist' : 'Karten sind'}</b> heute zur Wiederholung fällig.<br><button class="btn" data-act="reviewAll">Jetzt wiederholen</button>`
           : (today ? 'Stark – heute schon gelernt! 💪 Keine Wiederholungen mehr fällig.' : 'Heute noch nicht gelernt. Ein paar Minuten reichen schon!')}</div>
       </section>
-      <div class="section-head"><h2>Deine Sets</h2><a class="btn btn-primary btn-sm" href="#edit/new">${ICON.plus} Neues Set</a></div>
+      <div class="section-head"><h2>Deine Sets</h2><div style="display:flex;gap:8px"><a class="btn btn-ghost btn-sm" href="#library">${ICON.cards} Bibliothek</a><a class="btn btn-primary btn-sm" href="#edit/new">${ICON.plus} Neu</a></div></div>
       <div class="set-list">${setsHtml}</div>
     </main>`, {
     hideInstall: () => { DB.settings.hideInstall = true; save(); render(); },
@@ -349,6 +340,51 @@ function attachSwipe(el, { tap, left, right, noFly }) {
   el.addEventListener('pointercancel', () => { x0 = null; el.style.transition = ''; reset(); });
 }
 
+
+/* ============================== Foto-Texterkennung (Tesseract.js, läuft auf dem Gerät) ============================== */
+const OCR_LANG = { it: 'ita', de: 'deu', en: 'eng', fr: 'fra', es: 'spa' };
+let tessLoading = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve();
+  if (tessLoading) return tessLoading;
+  tessLoading = new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+    sc.onload = res; sc.onerror = () => { tessLoading = null; rej(new Error('load')); };
+    document.head.appendChild(sc);
+  });
+  return tessLoading;
+}
+async function downscale(file, max = 2200) {
+  const img = await createImageBitmap(file);
+  const sc = Math.min(1, max / Math.max(img.width, img.height));
+  const c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+  const ctx = c.getContext('2d'); ctx.filter = 'grayscale(1) contrast(1.3)'; ctx.drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+/* Zweispaltige Vokabellisten: an der größten Lücke zwischen den Wörtern einer Zeile trennen */
+function linesFromOcr(data) {
+  const out = [];
+  for (const line of (data.lines || [])) {
+    const words = (line.words || []).filter(w => w.text && w.text.trim()).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    if (!words.length) continue;
+    const h = (line.bbox.y1 - line.bbox.y0) || 20;
+    let best = -1, gap = 0;
+    for (let i = 1; i < words.length; i++) { const g = words[i].bbox.x0 - words[i - 1].bbox.x1; if (g > gap) { gap = g; best = i; } }
+    const txt = ws => ws.map(w => w.text).join(' ').trim();
+    const plain = txt(words);
+    if (/[\t;=]|\s[-–—]\s/.test(plain)) out.push(plain);
+    else if (best > 0 && gap > h * 1.1) out.push(`${txt(words.slice(0, best))} - ${txt(words.slice(best))}`);
+    else out.push(plain);
+  }
+  return out.filter(l => l.replace(/[^\p{L}]/gu, '').length > 1).join('\n');
+}
+async function ocrVocab(file, langs, onProgress) {
+  await loadTesseract();
+  const worker = await Tesseract.createWorker(langs, 1, { logger: m => { if (m.status === 'recognizing text') onProgress(Math.round(m.progress * 100)); else if (/load|init/i.test(m.status)) onProgress(-1); } });
+  try { const { data } = await worker.recognize(await downscale(file)); return linesFromOcr(data); }
+  finally { worker.terminate(); }
+}
 /* ============================== Set bearbeiten ============================== */
 function parseImport(text) {
   const out = [];
@@ -408,7 +444,8 @@ function viewEdit(id) {
         ${showImport ? `<div class="card import-box">
           <p><b>Liste einfügen</b> – eine Karte pro Zeile. Begriff und Definition getrennt durch Tab, Bindestrich, Semikolon, = oder Komma.<br><span class="muted">Aus Quizlet (am PC): Set öffnen → ⋯ → Exportieren → Text kopieren.</span></p>
           <textarea id="e-imp" placeholder="ciao	hallo&#10;la casa - das Haus&#10;mangiare; essen" ${inputAttrs}>${esc(importText)}</textarea>
-          <div class="row-btns"><span class="muted small" id="imp-count" style="margin-right:auto;align-self:center"></span><button class="btn btn-primary btn-sm" data-act="doImport">Übernehmen</button></div>
+          <div class="row-btns" style="align-items:center"><label class="btn btn-ghost btn-sm" style="margin-right:auto">📷 Foto scannen<input type="file" id="e-photo" accept="image/*" hidden></label><span class="muted small" id="imp-count"></span><button class="btn btn-primary btn-sm" data-act="doImport">Übernehmen</button></div>
+          <p class="muted small" style="margin:10px 0 0">Tipp: Vokabelliste gerade und gut beleuchtet fotografieren. Danach das Ergebnis kurz prüfen – Seitenzahlen oder Überschriften einfach löschen.</p>
         </div>` : ''}
         <div id="rows">${draft.rows.map((r, i) => `
           <div class="card edit-row" data-id="${r.id || ''}">
@@ -457,7 +494,21 @@ function viewEdit(id) {
     });
     ['#e-tl', '#e-dl'].forEach(sel => $(sel).addEventListener('change', () => { sync(); paint(); }));
     const imp = $('#e-imp');
-    if (imp) { const upd = () => { const n = parseImport(imp.value).length; $('#imp-count').textContent = n ? `${n} Karten erkannt` : ''; }; imp.addEventListener('input', upd); upd(); }
+    if (imp) {
+      const upd = () => { const n = parseImport(imp.value).length; $('#imp-count').textContent = n ? `${n} Karten erkannt` : ''; };
+      imp.addEventListener('input', upd); upd();
+      $('#e-photo').addEventListener('change', async e => {
+        const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+        const cnt = $('#imp-count'), langs = [...new Set([OCR_LANG[draft.termLang], OCR_LANG[draft.defLang]].filter(Boolean))].join('+');
+        cnt.textContent = 'Texterkennung wird geladen …';
+        try {
+          const text = await ocrVocab(f, langs, p => { if ($('#imp-count')) $('#imp-count').textContent = p < 0 ? 'Texterkennung wird geladen …' : `Erkenne Text … ${p} %`; });
+          const box = $('#e-imp'); if (!box) return;
+          box.value = (box.value.trim() ? box.value.trim() + '\n' : '') + text; importText = box.value; upd();
+          toast(parseImport(text).length ? 'Text erkannt – bitte kurz prüfen' : 'Text erkannt, aber keine Paare gefunden – bitte Trennzeichen ergänzen');
+        } catch (err) { if ($('#imp-count')) $('#imp-count').textContent = ''; toast('Texterkennung nicht möglich – bist du online?'); }
+      });
+    }
     requestAnimationFrame(() => {
       window.scrollTo(0, y);
       if (focusLast) { const rows = $$('.edit-row'); const last = rows[rows.length - 1]; last.scrollIntoView({ block: 'center' }); $('.e-term', last).focus(); }
@@ -1094,6 +1145,31 @@ function viewGravity(id) {
   intro();
 }
 
+
+/* ============================== Wortschatz-Bibliothek ============================== */
+function viewLibrary() {
+  const packs = typeof LIBRARY !== 'undefined' ? LIBRARY : [];
+  const has = k => DB.sets.some(s => s.libKey === k);
+  const count = p => p.cards.trim().split('\n').length;
+  const missing = packs.filter(p => !has(p.key));
+  setView(`${topbar('Wortschatz-Bibliothek', '#')}
+    <main class="page">
+      <div class="card form-card" style="margin-bottom:12px">
+        <h2>Italienisch · Basiswortschatz Kl. 13</h2>
+        <p class="muted small" style="margin-bottom:0">Thematisch nach dem Bildungsplan „Italienisch, neu beginnende Fremdsprache“ des Beruflichen Gymnasiums Baden-Württemberg (Jahrgangsstufe 2, Ziel B1). Ergänze die Sets mit den Vokabeln aus eurem Unterricht.</p>
+        ${missing.length ? `<button class="btn btn-primary btn-block" data-act="addAll">${ICON.plus} Alle fehlenden hinzufügen (${missing.length})</button>` : ''}
+      </div>
+      ${packs.map(p => `<div class="card set-tile" style="cursor:default">
+        <div class="set-tile-title">${esc(p.title)}</div>
+        <p class="muted small" style="margin:0 0 10px">${esc(p.desc)}</p>
+        <div class="set-tile-meta" style="margin:0;align-items:center"><span class="pill">${count(p)} Begriffe</span>
+          ${has(p.key) ? '<span class="pill" style="margin-left:auto;color:var(--ok)">✓ In deinen Sets</span>' : `<button class="btn btn-primary btn-sm" style="margin-left:auto" data-act="add" data-k="${p.key}">${ICON.plus} Hinzufügen</button>`}</div>
+      </div>`).join('<div style="height:12px"></div>')}
+    </main>`, {
+    add: t => { const p = packs.find(x => x.key === t.dataset.k); if (!p || has(p.key)) return; DB.sets.push(librarySet(p)); save(); toast('Set hinzugefügt'); render(); },
+    addAll: () => { missing.forEach(p => DB.sets.push(librarySet(p))); save(); toast(`${missing.length} Sets hinzugefügt`); render(); },
+  });
+}
 /* ============================== Einstellungen ============================== */
 function viewSettings() {
   const st = DB.settings;
