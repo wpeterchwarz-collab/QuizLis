@@ -1,7 +1,35 @@
 /* QuizLis Service Worker – macht die App offline-fähig.
-   Bei jedem Update CACHE-Version erhöhen. */
-const CACHE = 'quizlis-v1.2.0';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './wortschatz.js', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
+   VERSION muss mit APP_VERSION in js/core.js übereinstimmen (wird per Test geprüft).
+   Jede neue Version lädt alle Dateien frisch und aktualisiert die App beim Nutzer. */
+const VERSION = '1.3.0';
+const CACHE = `quizlis-v${VERSION}`;
+const ASSETS = [
+  './',
+  './index.html',
+  './styles.css',
+  './manifest.webmanifest',
+  './js/core.js',
+  './js/library.js',
+  './js/main.js',
+  './js/ocr.js',
+  './js/store.js',
+  './js/ui.js',
+  './js/util.js',
+  './js/views/cards.js',
+  './js/views/common.js',
+  './js/views/edit.js',
+  './js/views/games.js',
+  './js/views/home.js',
+  './js/views/learn.js',
+  './js/views/library.js',
+  './js/views/match.js',
+  './js/views/set.js',
+  './js/views/settings.js',
+  './js/views/test.js',
+  './icons/icon-180.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
@@ -16,6 +44,7 @@ self.addEventListener('fetch', e => {
   e.respondWith(caches.open(CACHE).then(async cache => {
     const cached = await cache.match(req, { ignoreSearch: true });
     const network = fetch(req).then(res => { if (res && res.ok) cache.put(req, res.clone()); return res; }).catch(() => null);
-    return cached || (await network) || cache.match('./index.html');
+    if (cached) { e.waitUntil(network); return cached; }
+    return (await network) || (req.mode === 'navigate' ? cache.match('./index.html') : Response.error());
   }));
 });

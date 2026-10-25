@@ -1,8 +1,10 @@
-'use strict';
 /* Basiswortschatz Italienisch – Berufliches Gymnasium BW, Niveau N, Jahrgangsstufe 2 (Kl. 13, Ziel B1).
    Thematisch geordnet nach den Sachfeldern des Bildungsplans (BPE 5.6–8.6, Profil WG).
    Format je Zeile: italienisch | deutsch */
-const LIBRARY = [
+import { uid } from './util.js';
+import { newCard } from './core.js';
+
+export const LIBRARY = [
   {
     key: 'it13-lavoro', title: 'Kl. 13 · Lavoro – Ausbildung & Bewerbung',
     desc: 'Bildungsplan BPE 8.3: Stellenangebote, Bewerbung, Lebenslauf, Vorstellungsgespräch',
@@ -384,10 +386,12 @@ risolto | risolvere (lösen)
   },
 ];
 
-function librarySet(pack) {
+export const libraryCount = pack => parsePack(pack).length;
+const parsePack = pack => pack.cards.trim().split('\n').map(l => l.split('|').map(x => x.trim())).filter(p => p[0] && p[1]);
+export function librarySet(pack) {
   return {
     id: uid(), libKey: pack.key, title: pack.title, desc: pack.desc, termLang: 'it', defLang: 'de',
     created: Date.now(), updated: Date.now(), lastTest: null,
-    cards: pack.cards.trim().split('\n').map(l => l.split('|').map(x => x.trim())).filter(p => p[0] && p[1]).map(([t, d]) => newCard(t, d)),
+    cards: parsePack(pack).map(([t, d]) => newCard(t, d)),
   };
 }
