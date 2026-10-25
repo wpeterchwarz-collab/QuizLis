@@ -1,6 +1,6 @@
 'use strict';
 /* QuizLis – Vokabel-Lern-App (PWA). Alle Daten bleiben lokal auf dem Gerät. */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 /* ============================== Helfer ============================== */
 const $ = (s, el = document) => el.querySelector(s);
@@ -117,19 +117,34 @@ function lev(a, b) {
   return prev[n];
 }
 const stripAccents = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
-const normAns = s => String(s || '').toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[’‘`´]/g, "'").replace(/[.!?¿¡"„“”:]/g, ' ').replace(/\s+/g, ' ').trim();
-function variants(a) {
+const normAns = s => String(s || '').toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[’‘`´]/g, "'").replace(/[.!?¿¡"„“”:]/g, ' ').replace(/\s*([/,;])\s*/g, '$1').replace(/\s+/g, ' ').trim();
+const ARTICLES = {
+  de: /^(der|die|das|ein|eine|einen|einem|einer|den|dem)\s+/,
+  it: /^(il|lo|la|i|gli|le|un|uno|una)\s+|^(l'|un')\s*/,
+};
+const stripArticle = (v, lang) => ARTICLES[lang] ? v.replace(ARTICLES[lang], '') : v;
+function variants(a, lang) {
   const base = normAns(a);
-  const parts = base.split(/\s*[/;,]\s*|\s+oder\s+/).map(x => x.trim()).filter(Boolean);
-  return [...new Set([base, ...parts])];
+  const parts = base.split(/[/,;]|\s+oder\s+/).map(x => x.trim()).filter(Boolean);
+  let vs = [base, ...parts];
+  if (lang === 'de') vs = vs.concat(vs.map(v => stripArticle(v, 'de'))); // im Deutschen Artikel optional
+  return [...new Set(vs)];
 }
-/* Ergebnis: ok | accent-ok (nur Akzent falsch, wird akzeptiert) | accent | typo | wrong */
-function checkAnswer(input, answer) {
-  const i = normAns(input); if (!i) return 'wrong';
-  const vs = variants(answer);
-  if (vs.includes(i)) return 'ok';
+/* Ergebnis: ok | accent-ok (nur Akzent falsch, wird akzeptiert) | accent | article | typo | wrong */
+function checkAnswer(input, answer, lang) {
+  let i = normAns(input); if (!i) return 'wrong';
+  if (lang === 'de') i = stripArticle(i, 'de');
+  const vs = variants(answer, lang);
+  const inParts = i.split(/[/,;]/).map(x => x.trim()).filter(Boolean);
+  const all = f => f(i) || (inParts.length > 1 && inParts.every(f));
+  if (all(x => vs.includes(x))) return 'ok';
+  const vsL = vs.map(stripAccents);
+  if (all(x => vsL.includes(stripAccents(x)))) return DB.settings.strictAccents ? 'accent' : 'accent-ok';
+  if (lang && lang !== 'de' && ARTICLES[lang]) {
+    const vsA = vs.map(v => stripAccents(stripArticle(v, lang))), iA = stripAccents(stripArticle(i, lang));
+    if (vsA.includes(iA)) return 'article';
+  }
   const iL = stripAccents(i);
-  if (vs.some(v => stripAccents(v) === iL)) return DB.settings.strictAccents ? 'accent' : 'accent-ok';
   if (vs.some(v => v.length >= 4 && lev(stripAccents(v), iL) <= (v.length >= 9 ? 2 : 1))) return 'typo';
   return 'wrong';
 }
@@ -176,12 +191,16 @@ const speakBtn = (t, l) => hasSpeech ? `<button class="speak" type="button" data
 const autoSpeak = (t, l) => { if (DB.settings.autoSpeak && l !== 'de') speak(t, l); };
 
 /* ============================== Router & Rendering ============================== */
-let actions = {}, cleanups = [];
+let actions = {}, cleanups = [], VIEW_TOKEN = 0;
+/* setTimeout, das nach einem Seitenwechsel nicht mehr feuert */
+function later(fn, ms) { const tok = VIEW_TOKEN; return setTimeout(() => { if (tok === VIEW_TOKEN) fn(); }, ms); }
 const onCleanup = fn => cleanups.push(fn);
 function setView(html, acts = {}) { actions = acts; $('#app').innerHTML = html; }
 function go(h) { if (location.hash.replace(/^#/, '') === h) render(); else location.hash = h; }
-function topbar(title, backHref = '#', right = '', closeIcon = false) {
-  return `<header class="topbar"><a class="icon-btn" href="${backHref}" aria-label="Zurück">${closeIcon ? ICON.close : ICON.back}</a><div class="topbar-title">${esc(title)}</div><div class="topbar-right">${right}</div></header>`;
+function topbar(title, backHref = '#', right = '', closeIcon = false, backAct = '') {
+  const icon = closeIcon ? ICON.close : ICON.back;
+  const back = backAct ? `<button class="icon-btn" data-act="${backAct}" aria-label="Zurück">${icon}</button>` : `<a class="icon-btn" href="${backHref}" aria-label="Zurück">${icon}</a>`;
+  return `<header class="topbar">${back}<div class="topbar-title">${esc(title)}</div><div class="topbar-right">${right}</div></header>`;
 }
 const bar = pct => `<div class="bar"><div style="width:${clamp(pct, 0, 100)}%"></div></div>`;
 
@@ -201,8 +220,9 @@ document.addEventListener('click', e => {
 });
 const accentBar = (lang, forSel) => (ACCENTS[lang] || []).length ? `<div class="accent-bar" data-for="${forSel}">${ACCENTS[lang].map(a => `<button type="button" tabindex="-1">${a}</button>`).join('')}</div>` : '';
 
-const ROUTES = { '': viewHome, set: viewSet, edit: viewEdit, cards: viewCards, learn: viewLearn, test: viewTestSetup, testrun: viewTestRun, match: viewMatch, settings: viewSettings };
+const ROUTES = { '': viewHome, set: viewSet, edit: viewEdit, cards: viewCards, learn: viewLearn, test: viewTestSetup, testrun: viewTestRun, match: viewMatch, blast: viewBlast, gravity: viewGravity, settings: viewSettings };
 function render() {
+  VIEW_TOKEN++;
   cleanups.forEach(f => { try { f(); } catch (e) { /* */ } }); cleanups = []; actions = {};
   if (hasSpeech) try { speechSynthesis.cancel(); } catch (e) { /* */ }
   const [name, ...args] = location.hash.replace(/^#\/?/, '').split('/');
@@ -275,8 +295,8 @@ function viewSet(id) {
         <a class="mode" href="#learn/${s.id}">${ICON.learn}Lernen${due ? `<span class="badge">${due}</span>` : ''}</a>
         <a class="mode" href="#test/${s.id}">${ICON.test}Test</a>
         <a class="mode" href="#match/${s.id}">${ICON.match}Match</a>
-        <div class="mode disabled">${ICON.rocket}Blast<small>bald</small></div>
-        <div class="mode disabled">${ICON.gravity}Gravity<small>bald</small></div>
+        <a class="mode" href="#blast/${s.id}">${ICON.rocket}Blast</a>
+        <a class="mode" href="#gravity/${s.id}">${ICON.gravity}Gravity</a>
       </div>
       <h2>Dein Fortschritt</h2>
       <div class="stats">
@@ -322,8 +342,8 @@ function attachSwipe(el, { tap, left, right, noFly }) {
   el.addEventListener('pointerup', () => {
     if (x0 === null) return; x0 = null; el.style.transition = '';
     if (!moved) { reset(); tap && tap(); return; }
-    if (dx > 90 && right) { if (noFly) { reset(); right(); } else { el.style.transform = 'translateX(120vw) rotate(18deg)'; setTimeout(right, 180); } }
-    else if (dx < -90 && left) { if (noFly) { reset(); left(); } else { el.style.transform = 'translateX(-120vw) rotate(-18deg)'; setTimeout(left, 180); } }
+    if (dx > 90 && right) { if (noFly) { reset(); right(); } else { el.style.transform = 'translateX(120vw) rotate(18deg)'; later(right, 180); } }
+    else if (dx < -90 && left) { if (noFly) { reset(); left(); } else { el.style.transform = 'translateX(-120vw) rotate(-18deg)'; later(left, 180); } }
     else reset();
   });
   el.addEventListener('pointercancel', () => { x0 = null; el.style.transition = ''; reset(); });
@@ -357,6 +377,8 @@ function viewEdit(id) {
     rows: s ? s.cards.map(c => ({ id: c.id, term: c.term, def: c.def })) : [0, 1, 2].map(() => ({ id: null, term: '', def: '' })),
   };
   let showImport = isNew, importText = '';
+  const snapshot = () => JSON.stringify([draft.title, draft.desc, draft.termLang, draft.defLang, draft.rows.filter(r => r.term.trim() || r.def.trim())]);
+  const initial = snapshot();
   const langOpts = sel => Object.entries(LANGS).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${v}</option>`).join('');
 
   function sync() {
@@ -369,7 +391,7 @@ function viewEdit(id) {
   function paint(focusLast) {
     const y = window.scrollY;
     setView(`
-      ${topbar(isNew ? 'Neues Set' : 'Set bearbeiten', isNew ? '#' : `#set/${s.id}`, '', true)}
+      ${topbar(isNew ? 'Neues Set' : 'Set bearbeiten', '', '', true, 'leave')}
       <main class="page">
         <div class="card edit-head">
           <label class="field"><input id="e-title" type="text" value="${esc(draft.title)}" placeholder="z. B. Italienisch Lektion 3"><span>Titel</span></label>
@@ -401,6 +423,7 @@ function viewEdit(id) {
         <div class="sticky-save"><button class="btn btn-primary btn-block btn-lg" data-act="save" style="margin:0">Speichern</button></div>
         ${!isNew ? `<div class="danger-zone"><button class="btn btn-danger btn-sm" data-act="delSet">${ICON.trash} Set löschen</button></div>` : ''}
       </main>`, {
+      leave: () => { sync(); if (snapshot() !== initial && !confirm('Änderungen verwerfen?')) return; go(isNew ? '' : `set/${s.id}`); },
       toggleImport: () => { sync(); showImport = !showImport; paint(); if (showImport) $('#e-imp')?.focus(); },
       doImport: () => {
         sync(); const rows = parseImport(importText);
@@ -429,7 +452,7 @@ function viewEdit(id) {
       },
       delSet: () => {
         if (!confirm(`Set „${s.title}“ wirklich löschen? Das kann nicht rückgängig gemacht werden.`)) return;
-        DB.sets = DB.sets.filter(x => x.id !== s.id); delete DB.best[s.id]; save(); toast('Set gelöscht'); go('');
+        DB.sets = DB.sets.filter(x => x.id !== s.id); Object.keys(DB.best).forEach(k => { if (k.endsWith(s.id)) delete DB.best[k]; }); save(); toast('Set gelöscht'); go('');
       },
     });
     ['#e-tl', '#e-dl'].forEach(sel => $(sel).addEventListener('change', () => { sync(); paint(); }));
@@ -525,65 +548,83 @@ function viewLearn(setIdsStr, cardIdsStr) {
 
   const canMC = all.length >= 2;
   const items = shuffle(pool).map(x => ({ ...x, stage: (!canMC || x.c.box >= 2) ? 1 : 0, err: false, dir: pickDir() }));
-  const total = items.length; const done = []; let queue = [...items]; let locked = false;
+  const total = items.length, done = [], queue = [...items];
+  let locked = false;
+  const cur = () => queue[0];
+  const curD = () => qaFor(queue[0]);
   const pct = () => items.reduce((n, it) => n + Math.min(it.stage, 2), 0) / (total * 2) * 100;
-  const shell = inner => `${topbar(`Lernen · ${done.length}/${total}`, backHref, '', true)}${bar(pct())}<main class="page">${inner}</main>`;
+  const title = () => `Lernen · ${done.length}/${total}`;
+  const qHead = d => `<div class="q-head"><span class="muted small" id="q-lang">${LANGS[d.qLang]}</span><span id="q-speak">${speakBtn(d.q, d.qLang)}</span></div><div class="q-text ${sizeClass(d.q)}" id="q-text">${esc(d.q)}</div>`;
+  const shell = inner => `${topbar(title(), backHref, '', true)}${bar(pct())}<main class="page">${inner}</main>`;
+  const acts = {
+    mc: t => {
+      if (locked) return; locked = true;
+      const it = cur(), d = curD(), k = +t.dataset.k, ok = it.opts[k] === d.a;
+      $$('.mc-opt').forEach((b, j) => b.classList.add(it.opts[j] === d.a ? 'correct' : (j === k ? 'wrong' : 'dim')));
+      result(ok, d);
+    },
+    dunno: () => { if (locked) return; locked = true; $('#wi').blur(); result(false, curD(), '', 'wrong'); },
+    next: () => advance(false),
+    override: () => { const it = cur(); it.err = it.prevErr; it.stage++; markStudied(); advance(true); },
+  };
 
   function paint() {
     if (!queue.length) return paintEnd();
     locked = false;
-    const it = queue[0], d = qaFor(it);
-    const head = `<div class="q-head"><span class="muted small">${LANGS[d.qLang]}</span>${speakBtn(d.q, d.qLang)}</div><div class="q-text ${sizeClass(d.q)}">${esc(d.q)}</div>`;
+    const it = cur(), d = curD();
     if (it.stage === 0) {
       it.opts = shuffle([d.a, ...distractors(all, it, it.dir, 3)]);
-      setView(shell(`<div class="card learn-card">${head}
+      if (it.opts.length < 2) it.stage = 1;
+    }
+    if (it.stage === 0) {
+      setView(shell(`<div class="card learn-card">${qHead(d)}
         <div class="q-instr">Wähle die richtige Antwort</div>
         <div class="mc-grid">${it.opts.map((o, k) => `<button class="mc-opt" data-act="mc" data-k="${k}"><span class="mc-num">${k + 1}</span><span>${esc(o)}</span></button>`).join('')}</div>
-        <div id="fb"></div></div>`), {
-        mc: t => {
-          if (locked) return; locked = true;
-          const k = +t.dataset.k, ok = it.opts[k] === d.a;
-          $$('.mc-opt').forEach((b, j) => { b.classList.add(it.opts[j] === d.a ? 'correct' : (j === k ? 'wrong' : 'dim')); });
-          result(ok, d);
-        },
-        next: () => advance(false),
-      });
+        <div id="fb"></div></div>`), acts);
     } else {
-      setView(shell(`<div class="card learn-card">${head}
-        <div class="q-instr">Schreib die Antwort auf ${LANGS[d.aLang]}</div>
-        <form id="wf" autocomplete="off"><input id="wi" class="write-input" type="text" placeholder="Antwort eingeben" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" lang="${d.aLang}">
-        ${accentBar(d.aLang, '#wi')}
-        <div class="row-btns"><button type="button" class="btn btn-ghost" data-act="dunno">Weiß ich nicht</button><button type="submit" class="btn btn-primary">Antworten</button></div></form>
-        <div id="fb"></div></div>`), {
-        dunno: () => { if (locked) return; locked = true; result(false, d, '', 'wrong'); },
-        next: () => advance(false),
-        override: () => { it.err = it.prevErr; it.stage++; advance(true); },
-      });
-      const inp = $('#wi'); inp.focus();
-      $('#wf').addEventListener('submit', e => {
-        e.preventDefault(); if (locked) return;
-        const v = inp.value; if (!v.trim()) { inp.focus(); return; }
-        locked = true; inp.blur(); inp.readOnly = true;
-        const r = checkAnswer(v, d.a);
-        result(r === 'ok' || r === 'accent-ok', d, v, r);
-      });
+      const inp = $('#wi');
+      if (inp && inp.dataset.lang === d.aLang) {
+        /* Schreibansicht weiterverwenden – so bleibt die iPhone-Tastatur offen */
+        $('.topbar-title').textContent = title(); $('.bar > div').style.width = `${pct()}%`;
+        $('#q-lang').textContent = LANGS[d.qLang]; $('#q-speak').innerHTML = speakBtn(d.q, d.qLang);
+        const qt = $('#q-text'); qt.textContent = d.q; qt.className = `q-text ${sizeClass(d.q)}`;
+        $('#fb').innerHTML = ''; $('.row-btns', $('#wf')).style.display = '';
+        inp.readOnly = false; inp.value = ''; inp.focus();
+      } else {
+        setView(shell(`<div class="card learn-card">${qHead(d)}
+          <div class="q-instr">Schreib die Antwort auf ${LANGS[d.aLang]}</div>
+          <form id="wf" autocomplete="off"><input id="wi" class="write-input" type="text" placeholder="Antwort eingeben" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" lang="${d.aLang}" data-lang="${d.aLang}">
+          ${accentBar(d.aLang, '#wi')}
+          <div class="row-btns"><button type="button" class="btn btn-ghost" data-act="dunno">Weiß ich nicht</button><button type="submit" class="btn btn-primary">Antworten</button></div></form>
+          <div id="fb"></div></div>`), acts);
+        const w = $('#wi'); w.focus();
+        $('#wf').addEventListener('submit', e => {
+          e.preventDefault();
+          if (locked) { if ($('[data-act=next]')) advance(false); return; }
+          const v = w.value; if (!v.trim()) { w.focus(); return; }
+          locked = true;
+          const dd = curD(), r = checkAnswer(v, dd.a, dd.aLang), ok = r === 'ok' || r === 'accent-ok';
+          if (!ok) { w.readOnly = true; w.blur(); }
+          result(ok, dd, v, r);
+        });
+      }
     }
     autoSpeak(d.q, d.qLang);
   }
 
   function result(ok, d, user = null, kind = null) {
-    const it = queue[0];
+    const it = cur();
     if ($('#wf')) $('.row-btns', $('#wf')).style.display = 'none';
     if (ok) {
       it.stage++; markStudied();
       const accentHint = kind === 'accent-ok' ? `<div>Richtig – achte aber auf die Akzente:</div><div class="ans ok">${esc(d.a)}${speakBtn(d.a, d.aLang)}</div>` : '';
-      $('#fb').innerHTML = `<div class="fb fb-ok"><div class="fb-title">${['Super!', 'Richtig!', 'Klasse!', 'Genau!', 'Perfetto!'][Math.floor(Math.random() * 5)]} ✓</div>${accentHint}</div>`;
+      $('#fb').innerHTML = `<div class="fb fb-ok"><div class="fb-title">${['Super!', 'Richtig!', 'Klasse!', 'Genau!', 'Perfetto!', 'Bravissima!'][Math.floor(Math.random() * 6)]} ✓</div>${accentHint}</div>`;
       autoSpeak(d.a, d.aLang);
-      setTimeout(() => advance(true), kind === 'accent-ok' ? 2000 : 900);
+      later(() => advance(true), kind === 'accent-ok' ? 2000 : 900);
     } else {
       it.prevErr = it.err; it.err = true;
-      const title = kind === 'typo' ? 'Fast richtig!' : kind === 'accent' ? 'Achte auf die Akzente!' : (user === null ? 'Nicht ganz – das lernst du noch!' : 'Noch nicht ganz – merk es dir!');
-      $('#fb').innerHTML = `<div class="fb fb-bad"><div class="fb-title">${title}</div>
+      const titleTxt = { typo: 'Fast richtig – kleiner Tippfehler?', accent: 'Achte auf die Akzente!', article: 'Denk an den Artikel!' }[kind] || (user === null ? 'Nicht ganz – das lernst du noch!' : 'Noch nicht ganz – merk es dir!');
+      $('#fb').innerHTML = `<div class="fb fb-bad"><div class="fb-title">${titleTxt}</div>
         ${user ? `<div class="muted small">Deine Antwort</div><div class="ans bad">${esc(user)}</div>` : ''}
         ${user !== null ? `<div class="muted small">Richtige Antwort</div><div class="ans ok">${esc(d.a)}${speakBtn(d.a, d.aLang)}</div>` : ''}
         <div class="row-btns">${user ? '<button class="btn btn-ghost" data-act="override">Ich hatte recht</button>' : ''}<button class="btn btn-primary" data-act="next">Weiter</button></div></div>`;
@@ -707,12 +748,13 @@ function viewTestRun() {
     else inner = `<div class="tq-q">${esc(q.q)}</div><input class="write-input t-input" id="ti${k}" data-k="${k}" type="text" placeholder="Antwort auf ${LANGS[q.aLang]}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" lang="${q.aLang}">${accentBar(q.aLang, '#ti' + k)}`;
     return `${sec}<div class="card tq"><div class="muted small">${k + 1} von ${n}</div>${inner}</div>`;
   }).join('');
-  setView(`${topbar('Test', T.backHref, `<span class="timer" id="timer"></span>`, true)}${bar(0)}
+  setView(`${topbar('Test', T.backHref, `<span class="timer" id="timer"></span>`, true, 'leave')}${bar(0)}
     <main class="page"><p class="muted small" id="answered" style="text-align:center;margin:8px 0 0"></p>${body}
     <button class="btn btn-primary btn-block btn-lg" data-act="submit" style="margin-top:20px">Test abgeben</button></main>`, {
     tf: t => { const q = T.qs[+t.dataset.k]; q.user = t.dataset.v === '1'; selectIn(t); upd(); },
     mc: t => { const q = T.qs[+t.dataset.k]; q.user = q.opts[+t.dataset.o]; selectIn(t); upd(); },
     submit: () => submit(false),
+    leave: () => { if (answered() && !confirm('Test abbrechen? Deine Antworten gehen verloren.')) return; CURRENT_TEST = null; location.hash = T.backHref; },
   });
   const selectIn = t => { $$('.choice', t.closest('.tq')).forEach(b => b.classList.remove('selected')); t.classList.add('selected'); };
   $('main').addEventListener('input', e => { if (e.target.classList.contains('t-input')) { T.qs[+e.target.dataset.k].user = e.target.value; upd(); } });
@@ -736,7 +778,7 @@ function viewTestRun() {
     T.qs.forEach(q => {
       if (q.type === 'tf') q.correct = q.user !== null && q.user === q.tfTrue;
       else if (q.type === 'mc') q.correct = q.user === q.a;
-      else { q.kind = checkAnswer(q.user || '', q.a); q.correct = q.kind === 'ok' || q.kind === 'accent-ok'; }
+      else { q.kind = checkAnswer(q.user || '', q.a, q.aLang); q.correct = q.kind === 'ok' || q.kind === 'accent-ok'; }
       if (!q.correct) { q.c.seen = true; q.c.box = Math.min(q.c.box, 1); q.c.due = Date.now(); }
     });
     T.done = true; T.end = Date.now();
@@ -784,7 +826,12 @@ function viewMatch(id) {
       <button class="btn btn-primary btn-block btn-lg" data-act="play">Spiel starten</button></main>`, { play });
   }
   function play() {
-    const picked = shuffle(s.cards).slice(0, 6);
+    const picked = [], seenT = new Set(), seenD = new Set();
+    for (const c of shuffle(s.cards)) {
+      const t = normAns(c.term), d = normAns(c.def);
+      if (seenT.has(t) || seenD.has(d) || seenT.has(d) || seenD.has(t) || t === d) continue;
+      seenT.add(t); seenD.add(d); picked.push(c); if (picked.length >= 6) break;
+    }
     const tiles = shuffle(picked.flatMap(c => [{ cid: c.id, text: c.term }, { cid: c.id, text: c.def }]));
     let sel = null, left = picked.length, penalty = 0, busy = false; const t0 = performance.now();
     const now = () => (performance.now() - t0) / 1000 + penalty;
@@ -800,7 +847,7 @@ function viewMatch(id) {
         const a = $(`.tile[data-k="${sel}"]`), b = el;
         if (tiles[sel].cid === tiles[k].cid) {
           a.classList.remove('sel'); a.classList.add('matched'); b.classList.add('matched'); sel = null; left--;
-          setTimeout(() => { a.classList.add('gone'); b.classList.add('gone'); }, 450);
+          later(() => { a.classList.add('gone'); b.classList.add('gone'); }, 450);
           if (!left) finish();
         } else {
           busy = true; penalty += 1; a.classList.remove('sel'); a.classList.add('wrong'); b.classList.add('wrong'); sel = null;
@@ -816,7 +863,7 @@ function viewMatch(id) {
       const time = Math.round(now() * 10) / 10, best = DB.best[id], isBest = !best || time < best;
       if (isBest) DB.best[id] = time;
       markStudied(picked.length); save();
-      setTimeout(() => setView(`${topbar('Match', `#set/${s.id}`, '', true)}<main class="page done">
+      later(() => setView(`${topbar('Match', `#set/${s.id}`, '', true)}<main class="page done">
         <div class="celebrate">${isBest ? '🏆' : '⚡'}</div><h1>${isBest ? 'Neue Bestzeit!' : 'Geschafft!'}</h1>
         <div class="big-time">${fmt(time)}</div>
         ${!isBest ? `<p class="muted">Bestzeit: ${fmt(best)}</p>` : best ? `<p class="muted">Vorher: ${fmt(best)}</p>` : ''}
@@ -824,6 +871,225 @@ function viewMatch(id) {
         <button class="btn btn-primary btn-block btn-lg" data-act="play">Nochmal spielen</button>
         <a class="btn btn-ghost btn-block" href="#set/${s.id}">Zurück zum Set</a></main>`, { play }), 550);
     }
+  }
+  intro();
+}
+
+/* ============================== Spiele: gemeinsame Teile ============================== */
+function gameIntro({ s, key, emoji, title, text, minCards, play }) {
+  if (s.cards.length < minCards) { toast(`Für ${title} braucht das Set mindestens ${minCards} Karten`); return go(`set/${s.id}`); }
+  const best = DB.best[`${key}_${s.id}`];
+  setView(`${topbar(title, `#set/${s.id}`, '', true)}<main class="page done">
+    <div class="celebrate">${emoji}</div><h1>${title}</h1>
+    <p class="muted">${text}</p>
+    ${best ? `<p>Dein Rekord: <b>${best} Punkte</b></p>` : ''}
+    <button class="btn btn-primary btn-block btn-lg" data-act="play">Spiel starten</button>
+    <a class="btn btn-ghost btn-block" href="#set/${s.id}">Zurück zum Set</a></main>`, { play });
+}
+function gameOver({ s, key, title, score, won, stats, replay }) {
+  const k = `${key}_${s.id}`, prev = DB.best[k] || 0, isBest = score > prev;
+  if (isBest) DB.best[k] = score;
+  save();
+  setView(`${topbar(title, `#set/${s.id}`, '', true)}<main class="page done">
+    <div class="celebrate">${isBest && score ? '🏆' : won ? '🎉' : '💥'}</div>
+    <h1>${isBest && score ? 'Neuer Rekord!' : won ? 'Alle Wörter geschafft!' : 'Game over'}</h1>
+    <div class="big-time">${score} Punkte</div>
+    <p class="muted">${stats}${!isBest && prev ? `<br>Rekord: ${prev} Punkte` : ''}</p>
+    <button class="btn btn-primary btn-block btn-lg" data-act="replay">Nochmal spielen</button>
+    <a class="btn btn-ghost btn-block" href="#set/${s.id}">Zurück zum Set</a></main>`, { replay });
+}
+const hearts = n => '❤️'.repeat(Math.max(0, n)) + '🖤'.repeat(Math.max(0, 3 - n));
+function floatPoints(field, x, y, txt) {
+  const el = document.createElement('div'); el.className = 'float-pts'; el.textContent = txt;
+  el.style.left = `${x}px`; el.style.top = `${y}px`; field.appendChild(el); later(() => el.remove(), 900);
+}
+
+/* ============================== Blast ============================== */
+function viewBlast(id) {
+  const s = getSet(id); if (!s) return go('');
+  const all = s.cards.map(c => ({ c, s }));
+  const intro = () => gameIntro({ s, key: 'blast', emoji: '🚀', title: 'Blast', minCards: 2, play,
+    text: 'Unten steht ein Wort – schieß den Asteroiden mit der richtigen Übersetzung ab!<br>Je schneller du triffst, desto mehr Punkte. Du hast 3 Leben.' });
+
+  function play() {
+    const deck = shuffle(all).map(x => ({ ...x, dir: pickDir() }));
+    let lives = 3, score = 0, hits = 0, misses = 0, combo = 0, rocks = [], roundStart = 0, roundLen = 0, busy = false, raf = 0, last = 0;
+    const level = () => 1 + Math.floor(hits / 5);
+    setView(`${topbar('Blast', `#set/${s.id}`, '', true)}
+      <div class="game-page" style="height:auto;flex:1">
+        <div class="game-hud"><span id="score">0</span><span class="lvl" id="lvl">Level 1</span><span class="lives" id="lives">${hearts(3)}</span></div>
+        <div class="space" id="field"><div class="ship">🚀</div></div>
+        <div class="game-prompt"><div class="lbl" id="plbl"></div><div class="word" id="pword"></div><div class="fuel" id="fuel"><div></div></div></div>
+      </div>`, {
+      rock: el => shoot(rocks[+el.dataset.k]),
+    });
+    $('#app').style.height = '100dvh'; onCleanup(() => { $('#app').style.height = ''; cancelAnimationFrame(raf); });
+    const field = $('#field');
+    const hud = () => { $('#score').textContent = `${score} Pkt`; $('#lvl').textContent = `Level ${level()}`; $('#lives').textContent = hearts(lives); };
+    hud();
+
+    function round() {
+      if (!deck.length) return finish(true);
+      busy = false;
+      const it = deck[0], d = qaFor(it);
+      $('#plbl').textContent = `${LANGS[d.qLang]} → ${LANGS[d.aLang]}`; $('#pword').textContent = d.q;
+      autoSpeak(d.q, d.qLang);
+      rocks.forEach(r => r.el.remove());
+      const opts = shuffle([d.a, ...distractors(all, it, it.dir, 3)]);
+      const W = field.clientWidth, H = field.clientHeight - 70;
+      const slots = shuffle([[0, 0], [1, 0], [0, 1], [1, 1]]);
+      const speed = 18 + level() * 9;
+      rocks = opts.map((o, k) => {
+        const el = document.createElement('button'); el.className = 'rock'; el.dataset.act = 'rock'; el.dataset.k = k; el.textContent = o;
+        field.appendChild(el);
+        const w = el.offsetWidth, h = el.offsetHeight;
+        const [sx, sy] = slots[k % 4];
+        const x = clamp(sx * W / 2 + Math.random() * Math.max(1, W / 2 - w), 0, Math.max(0, W - w));
+        const y = clamp(sy * H / 2 + Math.random() * Math.max(1, H / 2 - h), 0, Math.max(0, H - h));
+        const a = Math.random() * Math.PI * 2;
+        return { el, x, y, w, h, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, ok: o === d.a, text: o };
+      });
+      roundLen = Math.max(5, 13 - level()) * 1000; roundStart = performance.now(); last = roundStart;
+    }
+
+    function loop(t) {
+      const dt = Math.min(0.05, (t - last) / 1000); last = t;
+      const W = field.clientWidth, H = field.clientHeight - 70;
+      for (const r of rocks) {
+        if (r.dead) continue;
+        r.x += r.vx * dt; r.y += r.vy * dt;
+        if (r.x < 0) { r.x = 0; r.vx = Math.abs(r.vx); } if (r.x > W - r.w) { r.x = W - r.w; r.vx = -Math.abs(r.vx); }
+        if (r.y < 0) { r.y = 0; r.vy = Math.abs(r.vy); } if (r.y > H - r.h) { r.y = H - r.h; r.vy = -Math.abs(r.vy); }
+        r.el.style.transform = `translate(${r.x}px, ${r.y}px)`;
+      }
+      if (!busy) {
+        const left = 1 - (t - roundStart) / roundLen;
+        const fuel = $('#fuel'); fuel.firstChild.style.width = `${clamp(left, 0, 1) * 100}%`; fuel.classList.toggle('low', left < .3);
+        if (left <= 0) miss(null);
+      }
+      raf = requestAnimationFrame(loop);
+    }
+
+    function laserTo(r) {
+      const ship = $('.ship'), fx = field.clientWidth / 2, fy = field.clientHeight - ship.offsetHeight / 2 - 10;
+      const tx = r.x + r.w / 2, ty = r.y + r.h / 2, len = Math.hypot(tx - fx, ty - fy), ang = Math.atan2(ty - fy, tx - fx);
+      const l = document.createElement('div'); l.className = 'laser';
+      l.style.left = `${fx}px`; l.style.top = `${fy}px`; l.style.width = `${len}px`; l.style.transform = `rotate(${ang}rad)`;
+      field.appendChild(l); later(() => l.remove(), 300);
+    }
+
+    function shoot(r) {
+      if (busy || !r || r.dead) return;
+      busy = true; laserTo(r);
+      if (r.ok) {
+        const left = clamp(1 - (performance.now() - roundStart) / roundLen, 0, 1);
+        combo++; hits++;
+        const pts = Math.round((50 + left * 100) * level() * (combo >= 3 ? 1.5 : 1));
+        score += pts; floatPoints(field, r.x + r.w / 2 - 20, r.y, `+${pts}`);
+        r.dead = true; r.el.style.setProperty('--t', r.el.style.transform); r.el.classList.add('boom');
+        deck.shift(); markStudied(); hud();
+        later(round, 500);
+      } else miss(r);
+    }
+
+    function miss(r) {
+      busy = true; combo = 0; lives--; misses++; hud();
+      if (r) { r.el.classList.add('wrong'); }
+      rocks.forEach(x => { if (x.ok) x.el.classList.add('right'); });
+      const it = deck.shift(); deck.splice(Math.min(deck.length, 3), 0, it);
+      later(() => lives <= 0 ? finish(false) : round(), 1400);
+    }
+
+    function finish(won) {
+      cancelAnimationFrame(raf); $('#app').style.height = '';
+      gameOver({ s, key: 'blast', title: 'Blast', score, won, replay: play, stats: `${hits} Treffer · ${misses} Fehler · Level ${level()}` });
+    }
+
+    round(); raf = requestAnimationFrame(t => { last = t; loop(t); });
+  }
+  intro();
+}
+
+/* ============================== Gravity ============================== */
+function viewGravity(id) {
+  const s = getSet(id); if (!s) return go('');
+  const all = s.cards.map(c => ({ c, s }));
+  const intro = () => gameIntro({ s, key: 'gravity', emoji: '🌍', title: 'Gravity', minCards: 1, play,
+    text: 'Asteroiden stürzen auf deinen Planeten! Tippe die Übersetzung ein, bevor sie einschlagen.<br>Bei einem Fehler musst du das richtige Wort abschreiben. Du hast 3 Leben.' });
+
+  function play() {
+    const queue = shuffle(all).map(x => ({ ...x, dir: pickDir() }));
+    let lives = 3, score = 0, hits = 0, misses = 0, raf = 0, start = 0, dur = 0, rock = null, mode = 'fall', cur = null, x = 0;
+    const level = () => 1 + Math.floor(hits / 4);
+    const firstLang = qaFor(queue[0]).aLang;
+    setView(`${topbar('Gravity', `#set/${s.id}`, '', true)}
+      <div class="game-page" style="height:auto;flex:1">
+        <div class="game-hud"><span id="score">0 Pkt</span><span class="lvl" id="lvl">Level 1</span><span class="lives" id="lives">${hearts(3)}</span></div>
+        <form class="g-form" id="gf" autocomplete="off"><input id="gi" class="write-input" type="text" placeholder="Antwort eintippen + Enter" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" lang="${firstLang}">${accentBar(firstLang, '#gi')}</form>
+        <div class="space" id="field" style="margin-bottom:12px"><div class="planet" id="planet"></div></div>
+      </div>`);
+    $('#app').style.height = '100dvh';
+    const field = $('#field'), inp = $('#gi'), form = $('#gf');
+    /* Spielfeld an sichtbare Höhe anpassen (iPhone-Tastatur) */
+    const fit = () => { const vv = window.visualViewport; if (!vv) return; const top = field.getBoundingClientRect().top; field.style.flex = 'none'; field.style.height = `${Math.max(160, vv.height - top - 12)}px`; };
+    if (window.visualViewport) { visualViewport.addEventListener('resize', fit); fit(); }
+    onCleanup(() => { cancelAnimationFrame(raf); $('#app').style.height = ''; window.visualViewport && visualViewport.removeEventListener('resize', fit); });
+    const hud = () => { $('#score').textContent = `${score} Pkt`; $('#lvl').textContent = `Level ${level()}`; $('#lives').textContent = hearts(lives); };
+    inp.focus();
+
+    function spawn() {
+      if (!queue.length) return finish(true);
+      cur = queue.shift(); const d = qaFor(cur);
+      mode = 'fall'; inp.value = ''; inp.lang = d.aLang;
+      if (rock) rock.remove(); $('.copy-box')?.remove();
+      rock = document.createElement('div'); rock.className = 'rock'; rock.textContent = d.q; field.appendChild(rock);
+      x = Math.random() * Math.max(1, field.clientWidth - rock.offsetWidth);
+      dur = Math.max(4500, 11000 - (level() - 1) * 1100); start = performance.now();
+      autoSpeak(d.q, d.qLang);
+    }
+    function loop(t) {
+      if (mode === 'fall' && rock) {
+        const ground = field.clientHeight - 30 - rock.offsetHeight;
+        const p = (t - start) / dur, y = -rock.offsetHeight + p * (ground + rock.offsetHeight);
+        rock.style.transform = `translate(${x}px, ${y}px)`;
+        if (p >= 1) fail(true);
+      }
+      raf = requestAnimationFrame(loop);
+    }
+    function fail(impact) {
+      mode = 'copy'; misses++; lives--; hud();
+      const d = qaFor(cur);
+      rock.style.setProperty('--t', rock.style.transform); rock.classList.add(impact ? 'boom' : 'wrong');
+      if (impact) $('#planet').classList.remove('hit'), void field.offsetWidth, $('#planet').classList.add('hit');
+      const box = document.createElement('div'); box.className = 'copy-box';
+      box.innerHTML = `<div class="muted small">${impact ? 'Einschlag! 💥' : 'Leider falsch.'} Richtig ist:</div><div class="ans ok">${esc(d.a)}${speakBtn(d.a, d.aLang)}</div>${lives > 0 ? '<div class="small" style="margin-top:8px">Tippe es ab, um weiterzumachen.</div>' : ''}`;
+      field.appendChild(box); inp.value = '';
+      queue.splice(Math.min(queue.length, 3), 0, cur);
+      if (lives <= 0) { mode = 'over'; later(() => finish(false), 2200); }
+    }
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const v = inp.value; if (!v.trim() || mode === 'over') return;
+      const d = qaFor(cur), r = checkAnswer(v, d.a, d.aLang), ok = r === 'ok' || r === 'accent-ok';
+      if (mode === 'copy') {
+        if (ok) { queue.splice(queue.indexOf(cur), 1); queue.splice(Math.min(queue.length, 3), 0, cur); spawn(); }
+        else { form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake'); }
+        return;
+      }
+      if (ok) {
+        hits++; const left = clamp(1 - (performance.now() - start) / dur, 0, 1);
+        const pts = Math.round((40 + left * 60) * level()); score += pts; markStudied();
+        const m = rock.style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px/);
+        floatPoints(field, m ? +m[1] + 20 : 20, m ? Math.max(0, +m[2]) : 20, `+${pts}`);
+        rock.style.setProperty('--t', rock.style.transform); rock.classList.add('boom'); const old = rock; rock = null; later(() => old.remove(), 450);
+        hud(); inp.value = ''; later(spawn, 350); mode = 'wait';
+      } else fail(false);
+    });
+    function finish(won) {
+      cancelAnimationFrame(raf); $('#app').style.height = '';
+      gameOver({ s, key: 'gravity', title: 'Gravity', score, won, replay: play, stats: `${hits} Wörter getroffen · ${misses} Fehler · Level ${level()}` });
+    }
+    spawn(); raf = requestAnimationFrame(loop);
   }
   intro();
 }
@@ -902,5 +1168,11 @@ window.addEventListener('hashchange', render);
 render();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  const hadController = !!navigator.serviceWorker.controller; let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    if (!/learn|test|cards|match|blast|gravity|edit/.test(location.hash)) location.reload(); else toast('Update installiert – wird beim nächsten Start aktiv');
+  });
+  navigator.serviceWorker.register('./sw.js').then(r => r.update()).catch(() => {});
 }

@@ -193,7 +193,7 @@ h2 { font-size: 18px; margin: 0; font-weight: 800; }
   position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden;
   background: var(--surface); border-radius: 20px; box-shadow: var(--shadow-lg);
   display: flex; align-items: center; justify-content: center;
-  padding: 48px 24px; text-align: center;
+  padding: 48px 24px; text-align: center; overflow: auto;
 }
 .fc-back { transform: rotateY(180deg); }
 .fc-face .speak { position: absolute; top: 12px; right: 12px; }
@@ -368,3 +368,57 @@ textarea { min-height: 170px; font-family: ui-monospace, Menlo, monospace; font-
 @keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
 @keyframes rise { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-16px); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* ===== Spiele: Blast & Gravity ===== */
+.game-page { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
+.game-hud { display: flex; justify-content: space-between; align-items: center; padding: 0 16px 8px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.game-hud .lives { letter-spacing: 2px; }
+.game-hud .lvl { color: var(--muted); font-size: 14px; }
+.space {
+  position: relative; flex: 1; overflow: hidden; margin: 0 12px; border-radius: 20px;
+  background:
+    radial-gradient(1.5px 1.5px at 10% 20%, #fff8 50%, transparent 51%),
+    radial-gradient(1px 1px at 30% 70%, #fff6 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 55% 35%, #fff9 50%, transparent 51%),
+    radial-gradient(1px 1px at 75% 15%, #fff7 50%, transparent 51%),
+    radial-gradient(1px 1px at 85% 60%, #fff6 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 40% 90%, #fff5 50%, transparent 51%),
+    radial-gradient(1px 1px at 65% 80%, #fff6 50%, transparent 51%),
+    radial-gradient(ellipse at 50% 0%, #2b2a74 0%, #13124a 45%, #0a092d 100%);
+  background-size: 180px 180px, 220px 220px, 260px 260px, 200px 200px, 240px 240px, 300px 300px, 170px 170px, 100% 100%;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.rock {
+  position: absolute; left: 0; top: 0; will-change: transform;
+  min-width: 96px; max-width: 150px; min-height: 70px; padding: 12px 14px;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  border-radius: 46% 54% 52% 48% / 55% 45% 55% 45%;
+  background: radial-gradient(circle at 30% 30%, #9aa3bd, #5d6684 60%, #3f4663);
+  box-shadow: inset -6px -8px 0 rgba(0,0,0,.18), 0 6px 18px rgba(0,0,0,.35);
+  color: #fff; font-weight: 700; font-size: 14px; line-height: 1.2; word-break: break-word;
+  text-shadow: 0 1px 2px rgba(0,0,0,.5); cursor: pointer;
+}
+.rock.right { background: radial-gradient(circle at 30% 30%, #6ee7b7, #12a26c 65%, #0b6b48); }
+.rock.wrong { background: radial-gradient(circle at 30% 30%, #ffa49a, #e8524a 65%, #a3302a); animation: shake .4s; }
+.rock.boom { animation: boom .45s forwards; pointer-events: none; }
+.ship { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); font-size: 40px; filter: drop-shadow(0 0 10px #4255ff); pointer-events: none; }
+.laser { position: absolute; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #8f9bff, #fff); box-shadow: 0 0 12px #8f9bff; transform-origin: 0 50%; animation: laser .3s forwards; pointer-events: none; }
+.game-prompt { padding: 12px 16px calc(var(--safe-b) + 12px); text-align: center; }
+.game-prompt .lbl { font-size: 12px; font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
+.game-prompt .word { font-size: 24px; font-weight: 800; margin: 2px 0 8px; word-break: break-word; }
+.fuel { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.fuel > div { height: 100%; background: var(--primary); border-radius: 999px; }
+.fuel.low > div { background: var(--bad); }
+.planet { position: absolute; left: -10%; right: -10%; bottom: -70px; height: 100px; border-radius: 50% 50% 0 0; background: radial-gradient(ellipse at 50% 0%, #5b6bff, #2c35a8 70%); box-shadow: 0 -6px 30px rgba(66, 85, 255, .55); }
+.planet.hit { animation: flash .5s; }
+.g-form { padding: 0 12px 10px; }
+.g-form .write-input { margin: 0; }
+.g-form .accent-bar { margin: 6px 0 0; }
+.g-form .accent-bar button { height: 34px; min-width: 38px; font-size: 16px; }
+.g-form.shake { animation: shake .4s; }
+.copy-box { position: absolute; left: 12px; right: 12px; top: 12px; padding: 14px; border-radius: 14px; background: var(--surface); color: var(--text); text-align: center; box-shadow: var(--shadow-lg); animation: pop .25s; z-index: 5; }
+.copy-box .ans { justify-content: center; margin: 8px 0 0; }
+.float-pts { position: absolute; color: #ffd84d; font-weight: 900; font-size: 20px; pointer-events: none; animation: rise .9s forwards; text-shadow: 0 2px 6px rgba(0,0,0,.5); }
+@keyframes boom { 0% { transform: var(--t) scale(1); opacity: 1; } 100% { transform: var(--t) scale(1.6); opacity: 0; filter: blur(4px); } }
+@keyframes laser { 0% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes flash { 0%, 100% { filter: none; } 40% { filter: brightness(2.2) hue-rotate(140deg); } }
