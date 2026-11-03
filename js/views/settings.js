@@ -13,6 +13,8 @@ export function viewSettings() {
         <h2>Lernen</h2>
         <div class="switch-row settings-row"><div>Antworten auf<small>Was du im Lernen-Modus und in den Spielen eintippst</small></div>
           <select id="s-aw" aria-label="Antworten auf">${opt('term', 'Begriff (Italienisch)', st.answerWith)}${opt('def', 'Definition (Deutsch)', st.answerWith)}${opt('mixed', 'Gemischt', st.answerWith)}</select></div>
+        <div class="switch-row settings-row"><div>Wörter pro Lernrunde<small>Mehr Wörter = schnellerer Fortschritt, längere Runden</small></div>
+          <select id="s-round" aria-label="Wörter pro Lernrunde">${opt(10, '10', st.roundSize)}${opt(20, '20', st.roundSize)}${opt(30, '30', st.roundSize)}</select></div>
         <div class="switch-row"><label for="s-strict">Akzente streng prüfen<small>Aus: „citta“ statt „città“ zählt als richtig (mit Hinweis)</small></label><input type="checkbox" class="switch" id="s-strict" ${st.strictAccents ? 'checked' : ''}></div>
         <div class="switch-row"><label for="s-auto">Automatisch vorlesen<small>Italienische Wörter werden sofort vorgesprochen</small></label><input type="checkbox" class="switch" id="s-auto" ${st.autoSpeak ? 'checked' : ''}></div>
         <div class="switch-row settings-row"><div>Sprechtempo</div>
@@ -43,6 +45,7 @@ export function viewSettings() {
     },
   });
   $('#s-aw').addEventListener('change', e => { st.answerWith = e.target.value; save(); });
+  $('#s-round').addEventListener('change', e => { st.roundSize = +e.target.value; save(); });
   $('#s-strict').addEventListener('change', e => { st.strictAccents = e.target.checked; save(); });
   $('#s-auto').addEventListener('change', e => { st.autoSpeak = e.target.checked; save(); });
   $('#s-rate').addEventListener('change', e => { st.speechRate = +e.target.value; save(); speak('Ciao, come stai?', 'it'); });

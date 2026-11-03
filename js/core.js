@@ -1,7 +1,7 @@
 /* Reine Lernlogik – kein DOM, vollständig per Unit-Test prüfbar. */
 import { DAY, uid, shuffle, startOfDay, dayKey } from './util.js';
 
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 export const LANGS = { it: 'Italienisch', de: 'Deutsch', en: 'Englisch', fr: 'Französisch', es: 'Spanisch' };
 export const SPEECH = { it: 'it-IT', de: 'de-DE', en: 'en-GB', fr: 'fr-FR', es: 'es-ES' };
 export const ACCENTS = { it: ['à', 'è', 'é', 'ì', 'ò', 'ù'], fr: ['à', 'â', 'ç', 'é', 'è', 'ê', 'ë', 'î', 'ï', 'ô', 'ù', 'û'], es: ['á', 'é', 'í', 'ñ', 'ó', 'ú', 'ü', '¿', '¡'], de: ['ä', 'ö', 'ü', 'ß'], en: [] };
@@ -11,7 +11,10 @@ export const GRADE_TEXT = { 1: 'Sehr gut', 2: 'Gut', 3: 'Befriedigend', 4: 'Ausr
 
 /* ---------- Datenmodell ---------- */
 export const newCard = (term = '', def = '') => ({ id: uid(), term, def, box: 0, due: 0, seen: false, ok: 0, bad: 0 });
-export const defaultSettings = () => ({ answerWith: 'term', strictAccents: false, autoSpeak: false, cardFront: 'term', speechRate: 0.9, hideInstall: false });
+export const defaultSettings = () => ({ answerWith: 'term', strictAccents: false, autoSpeak: false, cardFront: 'term', speechRate: 0.9, hideInstall: false, roundSize: 10 });
+export const ROUND_SIZES = [10, 20, 30];
+/* Lernziel je Set: 'long' = langfristig merken (Wiederholung in wachsenden Abständen), 'short' = für eine Prüfung pauken (ohne Wartezeiten) */
+export const GOALS = { long: 'Langfristig merken', short: 'Für eine Prüfung pauken' };
 const safeId = id => (typeof id === 'string' && /^[a-z0-9_-]{4,40}$/i.test(id)) ? id : uid();
 const safeLang = (l, fb) => (l in LANGS ? l : fb);
 const num = (v, fb = 0) => (Number.isFinite(+v) ? +v : fb);
@@ -23,7 +26,7 @@ export function normalizeData(input) {
   const s0 = defaultSettings(), st = d.settings && typeof d.settings === 'object' ? d.settings : {};
   return {
     sets: sets.map(s => ({
-      id: safeId(s.id), libKey: typeof s.libKey === 'string' ? s.libKey : null,
+      id: safeId(s.id), libKey: typeof s.libKey === 'string' ? s.libKey : null, goal: s.goal in GOALS ? s.goal : null,
       title: String(s.title || 'Ohne Titel'), desc: String(s.desc || ''),
       termLang: safeLang(s.termLang, 'it'), defLang: safeLang(s.defLang, 'de'),
       created: num(s.created, Date.now()), updated: num(s.updated, Date.now()),
@@ -42,6 +45,7 @@ export function normalizeData(input) {
       cardFront: st.cardFront === 'def' ? 'def' : 'term',
       speechRate: [0.7, 0.9, 1.05].includes(+st.speechRate) ? +st.speechRate : s0.speechRate,
       hideInstall: !!st.hideInstall,
+      roundSize: ROUND_SIZES.includes(+st.roundSize) ? +st.roundSize : s0.roundSize,
     },
     stats: { streak: num(d.stats?.streak), lastDay: typeof d.stats?.lastDay === 'string' ? d.stats.lastDay : null, days: (d.stats?.days && typeof d.stats.days === 'object') ? d.stats.days : {} },
     best: (d.best && typeof d.best === 'object') ? Object.fromEntries(Object.entries(d.best).filter(([, v]) => Number.isFinite(+v))) : {},
@@ -60,15 +64,23 @@ export function applyStudy(stats, n = 1, now = Date.now()) {
 export const currentStreak = (stats, now = Date.now()) => (stats.lastDay === dayKey(now) || stats.lastDay === dayKey(now - DAY)) ? stats.streak : 0;
 
 /* ---------- Spaced Repetition (Leitner) ---------- */
-export function srsUpdate(c, correct, now = Date.now()) {
+export const KNOWN_BOX = 3;
+/* goal 'short': ein fehlerfrei gewusstes Wort gilt sofort als gelernt (danach normale Abstände) */
+export function srsUpdate(c, correct, now = Date.now(), goal = 'long') {
   c.seen = true;
-  if (correct) { c.box = Math.min(c.box + 1, INTERVALS.length - 1); c.ok++; } else { c.box = 1; c.bad++; }
+  if (correct) { c.box = Math.min(Math.max(c.box + 1, goal === 'short' ? KNOWN_BOX : 0), INTERVALS.length - 1); c.ok++; } else { c.box = 1; c.bad++; }
   c.due = startOfDay(now) + INTERVALS[c.box] * DAY;
   return c;
 }
-export const cardState = c => !c.seen ? 'new' : (c.box >= 3 ? 'known' : 'learning');
+export const cardState = c => !c.seen ? 'new' : (c.box >= KNOWN_BOX ? 'known' : 'learning');
 export const isDue = (c, now = Date.now()) => c.seen && c.due <= now;
-export function pickForLearning(all, n = 10, now = Date.now()) {
+export function pickForLearning(all, n = 10, now = Date.now(), goal = 'long') {
+  if (goal === 'short') {
+    /* Pauken: alles, was noch nicht sitzt – zuerst die Wackelkandidaten, dann neue Wörter; keine Wartezeiten */
+    const open = all.filter(x => cardState(x.c) !== 'known');
+    const weak = open.filter(x => x.c.seen).sort((a, b) => a.c.box - b.c.box || b.c.bad - a.c.bad);
+    return [...weak, ...open.filter(x => !x.c.seen)].slice(0, n);
+  }
   const due = all.filter(x => isDue(x.c, now)).sort((a, b) => a.c.box - b.c.box || a.c.due - b.c.due);
   const fresh = all.filter(x => !x.c.seen);
   return [...due, ...fresh].slice(0, n);
@@ -187,21 +199,4 @@ export function parseImport(text) {
     if (term && def) out.push({ id: null, term, def });
   }
   return out;
-}
-/* Texterkennung: zweispaltige Listen an der größten Wortlücke einer Zeile trennen */
-export function linesFromOcr(data) {
-  const out = [];
-  for (const line of (data?.lines || [])) {
-    const words = (line.words || []).filter(w => w.text && w.text.trim()).sort((a, b) => a.bbox.x0 - b.bbox.x0);
-    if (!words.length) continue;
-    const h = (line.bbox.y1 - line.bbox.y0) || 20;
-    let best = -1, gap = 0;
-    for (let i = 1; i < words.length; i++) { const g = words[i].bbox.x0 - words[i - 1].bbox.x1; if (g > gap) { gap = g; best = i; } }
-    const txt = ws => ws.map(w => w.text).join(' ').trim();
-    const plain = txt(words);
-    if (/[\t;=]|\s[-–—]\s/.test(plain)) out.push(plain);
-    else if (best > 0 && gap > h * 1.1) out.push(`${txt(words.slice(0, best))} - ${txt(words.slice(best))}`);
-    else out.push(plain);
-  }
-  return out.filter(l => l.replace(/[^\p{L}]/gu, '').length > 1).join('\n');
 }

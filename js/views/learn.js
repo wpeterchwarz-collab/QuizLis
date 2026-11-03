@@ -1,6 +1,6 @@
 import { esc, shuffle, sizeClass } from '../util.js';
-import { LANGS, qaFor, distractors, srsUpdate, pickForLearning, isCorrect } from '../core.js';
-import { save, getSet, markStudied } from '../store.js';
+import { LANGS, GOALS, qaFor, distractors, srsUpdate, pickForLearning, isCorrect, cardState } from '../core.js';
+import { DB, save, getSet, markStudied } from '../store.js';
 import { $, $$, setView, go, topbar, bar, ICON, speakBtn, autoSpeak, accentBar, later } from '../ui.js';
 import { check, dir } from './common.js';
 
@@ -13,11 +13,19 @@ export function viewLearn(setIdsStr, cardIdsStr) {
   const all = sets.flatMap(s => s.cards.map(c => ({ c, s })));
   if (!all.length) return go(backHref.slice(1));
 
+  /* Lernziel: gilt pro Set; beim Wiederholen mehrerer Sets immer „langfristig“ */
+  const single = sets.length === 1 ? sets[0] : null;
+  const goal = single?.goal || 'long';
+  const size = DB.settings.roundSize || 10;
+  const goalBtn = single ? `<button class="goal-pill" data-act="goal" aria-label="Lernziel ändern">${goal === 'short' ? '⚡ Prüfung' : '⏳ Langzeit'}</button>` : '';
+  if (single && cardIdsStr === 'goal') return chooseGoal(false);
+  if (single && !single.goal && !cardIdsStr) return chooseGoal(true);
+
   let pool;
-  if (cardIdsStr === 'all') pool = shuffle(all).slice(0, 10);
+  if (cardIdsStr === 'all') pool = shuffle(all).slice(0, size);
   else if (cardIdsStr) { const ids = new Set(cardIdsStr.split(',')); pool = all.filter(x => ids.has(x.c.id)); }
-  else pool = pickForLearning(all);
-  if (!pool.length) return paintNothingDue();
+  else pool = pickForLearning(all, size, Date.now(), goal);
+  if (!pool.length) return goal === 'short' ? paintAllKnown() : paintNothingDue();
 
   /* Jede Karte: Stufe 0 = Multiple Choice, Stufe 1 = selbst schreiben, Stufe 2 = geschafft */
   const canMC = all.length >= 2;
@@ -29,7 +37,7 @@ export function viewLearn(setIdsStr, cardIdsStr) {
   const pct = () => items.reduce((n, it) => n + Math.min(it.stage, 2), 0) / (total * 2) * 100;
   const title = () => `Lernen · ${done.length}/${total}`;
   const qHead = d => `<div class="q-head"><span class="muted small" id="q-lang">${LANGS[d.qLang]}</span><span id="q-speak">${speakBtn(d.q, d.qLang)}</span></div><div class="q-text ${sizeClass(d.q)}" id="q-text">${esc(d.q)}</div>`;
-  const shell = inner => `${topbar(title(), backHref, '', { close: true })}${bar(pct())}<main class="page">${inner}</main>`;
+  const shell = inner => `${topbar(title(), backHref, goalBtn, { close: true })}${bar(pct())}<main class="page">${inner}</main>`;
   const acts = {
     mc: t => {
       if (locked) return; locked = true;
@@ -40,6 +48,7 @@ export function viewLearn(setIdsStr, cardIdsStr) {
     dunno: () => { if (locked) return; locked = true; $('#wi')?.blur(); result(false, curD(), '', 'wrong'); },
     next: () => advance(false),
     override: () => { const it = cur(); it.err = it.prevErr; it.stage++; markStudied(); advance(true); },
+    goal: () => { if (done.length && !confirm('Lernziel ändern? Die laufende Runde wird neu gestartet (bisheriger Fortschritt bleibt gespeichert).')) return; chooseGoal(false); },
   };
 
   function paint() {
@@ -108,31 +117,65 @@ export function viewLearn(setIdsStr, cardIdsStr) {
 
   function advance(correct) {
     const it = queue.shift(); if (!it) return;
-    if (correct && it.stage >= 2) { srsUpdate(it.c, !it.err); done.push(it); save(); }
+    if (correct && it.stage >= 2) { srsUpdate(it.c, !it.err, Date.now(), goal); done.push(it); save(); }
     else queue.splice(Math.min(queue.length, correct ? 2 + Math.floor(Math.random() * 3) : 2), 0, it);
     paint();
   }
 
   function paintEnd() {
-    const more = pickForLearning(all).length;
+    const more = pickForLearning(all, 1e9, Date.now(), goal).length;
     const errs = done.filter(x => x.err).length;
     setView(`${topbar('Lernen', backHref, '', { close: true })}${bar(100)}<main class="page done">
       <div class="celebrate">🎉</div><h1>Runde geschafft!</h1>
       <p class="muted">${done.length} Begriffe gelernt${errs ? ` · ${errs} davon kommen bald wieder` : ' – alles ohne Fehler!'}</p>
-      ${more ? `<button class="btn btn-primary btn-block btn-lg" data-act="again">Weiterlernen (${more} warten)</button>` : '<p><b>Für heute ist alles erledigt.</b> Morgen geht\'s weiter! ✨</p>'}
+      ${progressLine()}
+      ${more ? `<button class="btn btn-primary btn-block btn-lg" data-act="again">Weiterlernen (${more} ${goal === 'short' ? 'noch offen' : 'warten'})</button>` : (goal === 'short' ? '<p><b>Alle Wörter sitzen!</b> 🎉</p>' : '<p><b>Für heute ist alles erledigt.</b> Morgen geht\'s weiter! ✨</p>')}
       <a class="btn btn-ghost btn-block" href="${backHref}">Fertig</a>
       <div class="done-list">${done.map(x => `<div class="card done-item"><span class="${x.err ? 'bad' : 'ok'}">${x.err ? ICON.redo : ICON.check}</span><b>${esc(x.c.term)}</b><span class="muted">${esc(x.c.def)}</span></div>`).join('')}</div>
     </main>`, { again: () => go(`learn/${setIdsStr}`) });
   }
 
+  function progressLine() {
+    if (!single) return '';
+    const known = single.cards.filter(c => cardState(c) === 'known').length, n = single.cards.length;
+    return `<div class="card goal-progress"><div class="progress"><div style="width:${Math.round(known / n * 100)}%"></div></div><span><b>${known} von ${n}</b> gelernt (${Math.round(known / n * 100)} %)</span></div>`;
+  }
+
+  /* Lernziel wählen – beim ersten Lernen eines Sets und jederzeit über den Knopf oben rechts */
+  function chooseGoal(first) {
+    const cur = single.goal;
+    const opt = (key, emoji, text) => `<button class="card goal-opt ${cur === key ? 'on' : ''}" data-act="pick" data-g="${key}">
+      <span class="goal-emoji">${emoji}</span><span><span class="goal-title">${GOALS[key]}</span><span class="muted small">${text}</span></span></button>`;
+    setView(`${topbar('Lernen', backHref, '', { close: true })}<main class="page">
+      <h1>${first ? 'Wie möchtest du lernen?' : 'Lernziel ändern'}</h1>
+      <p class="muted">Für dieses Set: <b>${esc(single.title)}</b></p>
+      ${opt('long', '⏳', 'Die App fragt jedes Wort in wachsenden Abständen ab (nach 1, 2, 4, 7 … Tagen). So bleibt der Wortschatz bis zum Abi hängen. Ein Wort gilt als <b>gelernt</b>, wenn du es an 3 verschiedenen Tagen gewusst hast – das dauert also bewusst ein paar Tage.')}
+      ${opt('short', '⚡', 'Ohne Wartezeiten: Du lernst Runde für Runde, bis alle Wörter sitzen – ideal kurz vor einer Klassenarbeit. Ein Wort gilt als <b>gelernt</b>, sobald du es in einer Runde fehlerfrei gewusst hast.')}
+      <p class="muted small">Du kannst das jederzeit ändern – oben rechts im Lernmodus oder auf der Set-Seite. Dein bisheriger Fortschritt bleibt erhalten.</p>
+    </main>`, { pick: t => { single.goal = t.dataset.g; save(); go(`learn/${setIdsStr}`); } });
+  }
+
+  function paintAllKnown() {
+    setView(`${topbar('Lernen', backHref, goalBtn, { close: true })}<main class="page done">
+      <div class="celebrate">🏆</div><h1>Alle Wörter sitzen!</h1>
+      ${progressLine()}
+      <p class="muted">Vor der Prüfung nochmal alles durchgehen? Oder auf „Langfristig merken“ umstellen, damit die Wörter auch danach hängen bleiben.</p>
+      <button class="btn btn-primary btn-block btn-lg" data-act="anyway">Alles nochmal üben</button>
+      <a class="btn btn-ghost btn-block" href="#test/${single.id}">${ICON.test} Test machen</a>
+      <button class="btn btn-ghost btn-block" data-act="goal">⏳ Auf „Langfristig merken“ umstellen</button></main>`,
+    { anyway: () => go(`learn/${setIdsStr}/all`), goal: () => chooseGoal(false) });
+  }
+
   function paintNothingDue() {
     const nexts = all.filter(x => x.c.seen).map(x => x.c.due);
     const next = nexts.length ? new Date(Math.min(...nexts)).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }) : null;
-    setView(`${topbar('Lernen', backHref, '', { close: true })}<main class="page done">
+    setView(`${topbar('Lernen', backHref, goalBtn, { close: true })}<main class="page done">
       <div class="celebrate">✨</div><h1>Alles erledigt!</h1>
       <p class="muted">Gerade ist nichts zur Wiederholung fällig.${next ? `<br>Nächste Wiederholung: <b>${next}</b>` : ''}</p>
+      ${progressLine()}
       <button class="btn btn-primary btn-block btn-lg" data-act="anyway">Trotzdem üben</button>
-      <a class="btn btn-ghost btn-block" href="${backHref}">Zurück</a></main>`, { anyway: () => go(`learn/${setIdsStr}/all`) });
+      ${single ? '<button class="btn btn-ghost btn-block" data-act="goal">⚡ Prüfung steht an? Auf „Pauken“ umstellen</button>' : ''}
+      <a class="btn btn-ghost btn-block" href="${backHref}">Zurück</a></main>`, { anyway: () => go(`learn/${setIdsStr}/all`), goal: () => chooseGoal(false) });
   }
   paint();
 }

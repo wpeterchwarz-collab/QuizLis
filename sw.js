@@ -1,7 +1,7 @@
 /* QuizLis Service Worker – macht die App offline-fähig.
    VERSION muss mit APP_VERSION in js/core.js übereinstimmen (wird per Test geprüft).
    Jede neue Version lädt alle Dateien frisch und aktualisiert die App beim Nutzer. */
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const CACHE = `quizlis-v${VERSION}`;
 const ASSETS = [
   './',
@@ -11,6 +11,8 @@ const ASSETS = [
   './js/core.js',
   './js/library.js',
   './js/main.js',
+  './js/ocr-image.js',
+  './js/ocr-pairs.js',
   './js/ocr.js',
   './js/store.js',
   './js/ui.js',

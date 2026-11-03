@@ -45,6 +45,23 @@ test('pickForLearning: erst fällige (schwächste zuerst), dann neue, maximal n'
   assert.ok(!picked.includes(notDue));
 });
 
+test('Lernziel „Pauken“: fehlerfrei gewusst = sofort gelernt, Fehler setzt zurück', () => {
+  const c = newCard('a', 'b');
+  srsUpdate(c, true, NOW, 'short');
+  assert.equal(cardState(c), 'known'); assert.equal(c.box, 3);
+  srsUpdate(c, true, NOW, 'short'); assert.equal(c.box, 4);       // danach normale Steigerung
+  srsUpdate(c, false, NOW, 'short'); assert.equal(c.box, 1); assert.equal(cardState(c), 'learning');
+});
+
+test('pickForLearning „Pauken“: ignoriert Wartezeiten, nimmt nur noch nicht gelernte Wörter', () => {
+  const mk = (box, due, seen, bad = 0) => ({ c: { ...newCard('t', 'd'), box, due, seen, bad } });
+  const known = mk(4, NOW + 9 * DAY, true), weakLater = mk(1, NOW + DAY, true, 3), learning = mk(2, NOW + 2 * DAY, true), fresh = mk(0, 0, false);
+  const picked = pickForLearning([known, fresh, learning, weakLater], 10, NOW, 'short');
+  assert.deepEqual(picked, [weakLater, learning, fresh]);
+  assert.deepEqual(pickForLearning([known], 10, NOW, 'short'), []);
+  assert.deepEqual(pickForLearning([weakLater, learning], 10, NOW, 'long'), []);   // langfristig: noch nicht fällig
+});
+
 test('Lernserie: zählt aufeinanderfolgende Tage, reißt nach Pause ab', () => {
   const st = { streak: 0, lastDay: null, days: {} };
   applyStudy(st, 1, NOW); assert.equal(st.streak, 1);

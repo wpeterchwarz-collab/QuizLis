@@ -22,7 +22,7 @@ test('Falsche Antwort: Rückmeldung, Karte kommt wieder und zählt als Fehler', 
 });
 
 test('Schreibmodus: Hinweise für Artikel, Akzent und „Ich hatte recht“', async ({ page }) => {
-  await seed(page, { cards: [['la casa', 'das Haus'], ['la città', 'die Stadt']], data: { sets: [{ id: 'set1', title: 'T', termLang: 'it', defLang: 'de', cards: [{ id: 'cardA', term: 'la casa', def: 'das Haus', box: 2, seen: true, due: 1 }, { id: 'cardB', term: 'la città', def: 'die Stadt', box: 2, seen: true, due: 1 }] }], settings: { hideInstall: true } } });
+  await seed(page, { cards: [['la casa', 'das Haus'], ['la città', 'die Stadt']], data: { sets: [{ id: 'set1', title: 'T', termLang: 'it', defLang: 'de', goal: 'long', cards: [{ id: 'cardA', term: 'la casa', def: 'das Haus', box: 2, seen: true, due: 1 }, { id: 'cardB', term: 'la città', def: 'die Stadt', box: 2, seen: true, due: 1 }] }], settings: { hideInstall: true } } });
   await page.goto('./#learn/set1');
   for (let i = 0; i < 2; i++) {
     const q = (await page.locator('#q-text').innerText()).trim();
@@ -39,7 +39,7 @@ test('Schreibmodus: Hinweise für Artikel, Akzent und „Ich hatte recht“', as
 });
 
 test('Tastatur bleibt offen: dasselbe Eingabefeld wird weiterverwendet', async ({ page }) => {
-  await seed(page, { data: { sets: [{ id: 'set1', title: 'T', termLang: 'it', defLang: 'de', cards: [['a1', 'eins'], ['b2', 'zwei'], ['c3', 'drei']].map(([t, d], i) => ({ id: `card${i}`, term: t, def: d, box: 2, seen: true, due: 1 })) }], settings: { hideInstall: true } } });
+  await seed(page, { data: { sets: [{ id: 'set1', title: 'T', termLang: 'it', defLang: 'de', goal: 'long', cards: [['a1', 'eins'], ['b2', 'zwei'], ['c3', 'drei']].map(([t, d], i) => ({ id: `card${i}`, term: t, def: d, box: 2, seen: true, due: 1 })) }], settings: { hideInstall: true } } });
   await page.goto('./#learn/set1');
   const map = await answers(page);
   await page.evaluate(() => { document.getElementById('wi').dataset.marker = 'same'; });

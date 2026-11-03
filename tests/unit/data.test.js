@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeData, parseImport, linesFromOcr, distractors, uniquePairs, newCard, LANGS } from '../../js/core.js';
+import { normalizeData, parseImport, distractors, uniquePairs, newCard, LANGS } from '../../js/core.js';
 import { LIBRARY, librarySet, libraryCount } from '../../js/library.js';
 
 test('normalizeData repariert kaputte oder fremde Daten', () => {
@@ -21,8 +21,15 @@ test('normalizeData repariert kaputte oder fremde Daten', () => {
   assert.equal(s.cards.length, 2);
   assert.equal(s.cards[0].box, 6);
   assert.equal(s.cards[1].box, 0); assert.equal(s.cards[1].due, 0);
-  assert.equal(d.settings.answerWith, 'term'); assert.equal(d.settings.speechRate, 0.9);
+  assert.equal(d.settings.answerWith, 'term'); assert.equal(d.settings.speechRate, 0.9); assert.equal(d.settings.roundSize, 10);
+  assert.equal(s.goal, null);
   assert.deepEqual(d.best, { a: 3 });
+});
+
+test('normalizeData behält Lernziel und Rundengröße', () => {
+  const d = normalizeData({ sets: [{ id: 'abc123', goal: 'short', cards: [] }, { id: 'abc124', goal: 'quatsch', cards: [] }], settings: { roundSize: 20 } });
+  assert.equal(d.sets[0].goal, 'short'); assert.equal(d.sets[1].goal, null); assert.equal(d.settings.roundSize, 20);
+  assert.equal(normalizeData({ settings: { roundSize: 999 } }).settings.roundSize, 10);
 });
 
 test('normalizeData verkraftet leere Eingaben', () => {
@@ -43,16 +50,6 @@ test('parseImport erkennt alle Trennzeichen', () => {
 
 test('parseImport: Bindestrich im Wort trennt nicht', () => {
   assert.deepEqual(parseImport('il part-time - die Teilzeit').map(r => r.def), ['die Teilzeit']);
-});
-
-test('linesFromOcr trennt zweispaltige Listen an der Lücke', () => {
-  const w = (text, x0, x1) => ({ text, bbox: { x0, x1 } });
-  const data = { lines: [
-    { bbox: { y0: 0, y1: 30 }, words: [w('la', 10, 40), w('casa', 50, 120), w('das', 400, 450), w('Haus', 460, 530)] },
-    { bbox: { y0: 40, y1: 70 }, words: [w('Lezione', 10, 120), w('4', 130, 150)] },
-    { bbox: { y0: 80, y1: 110 }, words: [w('|', 10, 12)] },
-  ] };
-  assert.equal(linesFromOcr(data), 'la casa - das Haus\nLezione 4');
 });
 
 test('distractors: eindeutig, ohne richtige Antwort', () => {

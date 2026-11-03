@@ -1,6 +1,6 @@
 import { esc, sizeClass } from '../util.js';
-import { LANGS, STATE_TEXT, cardState, isDue } from '../core.js';
-import { getSet } from '../store.js';
+import { LANGS, STATE_TEXT, GOALS, cardState, isDue } from '../core.js';
+import { DB, getSet } from '../store.js';
 import { $, setView, go, topbar, ICON, speakBtn, attachSwipe } from '../ui.js';
 
 export function viewSet(id) {
@@ -36,6 +36,8 @@ export function viewSet(id) {
         <div class="card stat learning"><b>${counts.learning}</b><span>Am Lernen</span></div>
         <div class="card stat known"><b>${counts.known}</b><span>Gelernt</span></div>
       </div>
+      <p class="goal-line muted small">${s.goal ? `Lernziel: <b>${GOALS[s.goal]}</b> · <a href="#learn/${s.id}/goal">ändern</a>` : 'Lernziel wählst du beim ersten Lernen.'}<br>
+        ${s.goal === 'short' ? '„Gelernt“ = in einer Lernrunde fehlerfrei gewusst.' : '„Gelernt“ = an 3 verschiedenen Tagen gewusst. Neue Wörter pro Runde: ' + DB.settings.roundSize + ' (in den Einstellungen änderbar).'}</p>
       ${lt ? `<p class="last-test muted">Letzter Test: <b>Note ${lt.grade}</b> (${lt.pct} %) am ${new Date(lt.date).toLocaleDateString('de-DE')}</p>` : '<div style="height:12px"></div>'}
       <div class="section-head"><h2>Begriffe in diesem Set (${s.cards.length})</h2></div>
       ${s.cards.map(c => `<div class="card term-row"><div class="t"><span class="dot ${cardState(c)}" title="${STATE_TEXT[cardState(c)]}"></span>${esc(c.term)}</div><div class="d">${esc(c.def)}</div>${speakBtn(c.term, s.termLang)}</div>`).join('')}

@@ -441,3 +441,31 @@ textarea { min-height: 170px; font-family: ui-monospace, Menlo, monospace; font-
   .match-grid { gap: 8px; }
   .tile { min-height: 84px; font-size: 13px; }
 }
+
+/* Foto-Scan: Prüfliste */
+.scan-box { margin: 4px 0 14px; padding: 12px; border-radius: 12px; background: var(--primary-soft); }
+.scan-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.scan-cols { display: grid; grid-template-columns: 30px 1fr; gap: 8px; padding: 0 2px 4px; font-weight: 700; align-items: center; }
+.scan-cols .link { font-size: 12px; color: var(--primary); font-weight: 700; text-align: center; }
+.scan-row { display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: center; margin: 8px 0; padding: 8px; border-radius: 12px; background: var(--surface); }
+.scan-pair { display: grid; gap: 4px; min-width: 0; }
+@media (min-width: 600px) { .scan-pair { grid-template-columns: 1fr 1fr; } }
+.scan-row input[type=text] { padding: 7px 10px; font-size: 16px; background: var(--surface-2); min-width: 0; border-width: 1px; }
+.scan-row .s-term { font-weight: 700; }
+.scan-row input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--primary); margin: 0 auto; }
+.scan-row.off input[type=text] { opacity: .45; text-decoration: line-through; }
+.scan-rest { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+.scan-rest summary { cursor: pointer; font-weight: 600; }
+.scan-rest p { margin: 6px 0 0; word-break: break-word; }
+
+/* Lernziel */
+.goal-pill { padding: 6px 10px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-weight: 800; font-size: 13px; white-space: nowrap; }
+.goal-opt { display: flex; gap: 14px; align-items: flex-start; width: 100%; text-align: left; padding: 16px; margin: 12px 0; border: 2px solid transparent; }
+.goal-opt.on { border-color: var(--primary); }
+.goal-title { display: block; font-size: 17px; font-weight: 800; margin-bottom: 4px; }
+.goal-opt .muted { display: block; line-height: 1.45; }
+.goal-emoji { font-size: 30px; line-height: 1; }
+.goal-progress { padding: 12px 14px; margin: 12px 0 16px; text-align: left; }
+.goal-progress span { display: block; margin-top: 6px; font-size: 14px; }
+.goal-line { margin: 4px 0 12px; line-height: 1.5; }
+.goal-line a { color: var(--primary); font-weight: 700; }

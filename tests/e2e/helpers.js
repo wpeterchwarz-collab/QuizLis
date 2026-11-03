@@ -21,10 +21,19 @@ export async function seed(page, { cards = SAMPLE, data = {} } = {}) {
     if (sessionStorage.getItem('seeded')) return;
     sessionStorage.setItem('seeded', '1');
     localStorage.setItem('quizlis.v1', JSON.stringify({
-      sets: [{ id: 'set1', title: 'Testset', termLang: 'it', defLang: 'de', cards: cards.map(([term, def], i) => ({ id: `card${i}`, term, def })) }],
+      sets: [{ id: 'set1', title: 'Testset', termLang: 'it', defLang: 'de', goal: 'long', cards: cards.map(([term, def], i) => ({ id: `card${i}`, term, def })) }],
       settings: { hideInstall: true }, ...data,
     }));
   }, [cards, data]);
+}
+/* Texterkennung im Test aus node_modules statt aus dem Internet laden */
+export async function routeTesseract(page) {
+  await page.context().route('https://cdn.jsdelivr.net/**', async route => {
+    const m = route.request().url().match(/\/npm\/((?:@[^/]+\/)?[^@/]+)(?:@[^/]+)?\/(.*)$/);
+    const path = m && `node_modules/${m[1]}/${m[2]}`;
+    try { await route.fulfill({ path, headers: { 'access-control-allow-origin': '*', 'content-type': path.endsWith('.wasm') ? 'application/wasm' : path.endsWith('.js') ? 'text/javascript' : 'application/octet-stream' } }); }
+    catch { await route.abort(); }
+  });
 }
 export const db = page => page.evaluate(() => JSON.parse(localStorage.getItem('quizlis.v1')));
 export async function answers(page) {
